@@ -27,12 +27,16 @@ const BallAnimation = () => {
   const dataArray = useRef(null);
   const source = useRef(null); // Adicionado para armazenar a fonte de áudio
 
+  // Estado para controle de áudio
+  const [audioLoaded, setAudioLoaded] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+
   // Referência para a função animate
   const animateRef = useRef();
 
   // Função para obter a amplitude do áudio
   const getAudioAmplitude = useCallback(() => {
-    if (!analyser.current) return 0;
+    if (!analyser.current || !dataArray.current) return 0;
 
     analyser.current.getByteFrequencyData(dataArray.current);
     let sum = 0;
@@ -52,7 +56,6 @@ const BallAnimation = () => {
     return `#${color.getHexString()}`;
   }, []);
 
-  // --- Função para Criar Bolas ---
   const createBall = useCallback((color, size) => {
     const sphereGeometry = new THREE.SphereGeometry(size, 32, 32);
     const sphereMaterial = new THREE.MeshPhongMaterial({ color });
@@ -90,7 +93,6 @@ const BallAnimation = () => {
     balls.current.push({ mesh: sphereMesh, body: sphereBody, trail: trail, infoText: infoText });
   }, [scene, world]);
 
-  // --- Função para Reiniciar as Bolas ---
   const resetBalls = useCallback(() => {
     balls.current.forEach(({ mesh, body, trail, infoText }) => {
       scene.remove(mesh);
@@ -103,174 +105,202 @@ const BallAnimation = () => {
     ballInfoTexts.current = [];
   }, [scene, world]);
 
-  // --- Função para Criar as Paredes da Caixa ---
-  const createWalls = useCallback(() => {
-    const wallMaterial = new CANNON.Material();
-    const wallThickness = 0.5;
-    const wallHeight = boxSize;
-    const wallGeometry = new THREE.BoxGeometry(boxSize, wallHeight, wallThickness);
-
-    const threeWallMaterial = new THREE.MeshPhongMaterial({
-      color: 0x666666,
-      side: THREE.DoubleSide,
-    });
-    const threeCeilingMaterial = new THREE.MeshPhongMaterial({
-      color: 0x666666,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.2,
-    });
-
-    const createWall = (position, quaternion, material) => {
-      const wallShape = new CANNON.Box(new CANNON.Vec3(boxSize / 2, wallHeight / 2, wallThickness / 2));
-      const wallBody = new CANNON.Body({
-        mass: 0,
-        shape: wallShape,
-        material: wallMaterial,
-      });
-      wallBody.position.copy(position);
-      wallBody.quaternion.copy(quaternion);
-      world.addBody(wallBody);
-
-      const wallMesh = new THREE.Mesh(wallGeometry, material);
-      wallMesh.position.copy(position);
-      wallMesh.quaternion.copy(quaternion);
-      scene.add(wallMesh);
-    };
-
-    // Chão, Teto e Paredes
-    createWall(new CANNON.Vec3(0, -wallHeight / 2, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2), threeWallMaterial);
-    createWall(new CANNON.Vec3(0, wallHeight / 2, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2), threeCeilingMaterial);
-    createWall(new CANNON.Vec3(0, 0, -boxSize / 2), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 0), 0), threeWallMaterial);
-    createWall(new CANNON.Vec3(0, 0, boxSize / 2), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI), threeWallMaterial);
-    createWall(new CANNON.Vec3(-boxSize / 2, 0, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI / 2), threeWallMaterial);
-    createWall(new CANNON.Vec3(boxSize / 2, 0, 0), new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI / 2), threeWallMaterial);
-  }, [boxSize, scene, world]);
-
-  // --- Efeito para Configuração Inicial, Animação e Limpeza ---
-  useEffect(() => {
-    renderer.current = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
-    renderer.current.setSize(window.innerWidth, window.innerHeight);
-    renderer.current.setClearColor(0x000000);
-    renderer.current.shadowMap.enabled = true;
-
-    world.gravity.set(0, gravity, 0);
-    world.broadphase = new CANNON.NaiveBroadphase();
-    world.solver.iterations = 10;
-
-    const ambientLight = new THREE.AmbientLight(0x404040);
-    scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    directionalLight.position.set(5, 5, 5);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.mapSize.width = 1024;
-    directionalLight.shadow.mapSize.height = 1024;
-    directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far = 500;
-    scene.add(directionalLight);
-
-    // Plano (Chão)
-    const planeGeometry = new THREE.PlaneGeometry(boxSize, boxSize);
-    const planeMaterial = new THREE.MeshPhongMaterial({ color: 0x999999, side: THREE.DoubleSide });
-    const planeMesh = new THREE.Mesh(planeGeometry, planeMaterial);
-    planeMesh.rotation.x = -Math.PI / 2;
-    planeMesh.receiveShadow = true;
-    scene.add(planeMesh);
-
-    const planeShape = new CANNON.Plane();
-    const planeBody = new CANNON.Body({ mass: 0, shape: planeShape });
-    planeBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
-    world.addBody(planeBody);
-
-    // Paredes e Teto
-    createWalls();
-
-    // Contato entre Bola e Parede
-    const ballMaterial = new CANNON.Material();
-    const wallMaterial = new CANNON.Material();
-    world.addContactMaterial(new CANNON.ContactMaterial(ballMaterial, wallMaterial, {
-      friction: 0.1,
-      restitution: 0.7
-    }));
-
-    balls.current.forEach(({ body }) => {
-      body.material = ballMaterial;
-    });
-
-    // Câmera e Controles
-    camera.position.set(0, 8, 25);
-    camera.lookAt(0, 0, 0);
-
-    const controls = new OrbitControls(camera, renderer.current.domElement);
-    controls.target.set(0, 0, 0);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-
-    // Função de Animação
-    animateRef.current = () => {
-        if (isPaused) return;
-        requestAnimationFrame(animateRef.current);
-        world.gravity.set(0, gravity, 0);
-        world.step(1 / 60);
-      
-        // Usa a amplitude do áudio para o efeito de pulo
-        const amplitude = getAudioAmplitude();
-      
-        balls.current.forEach(({ mesh, body, trail, infoText }) => {
-          // Reatividade ao som (PULO)
-          if (amplitude > 30) {
-            let impulse = new CANNON.Vec3(0, amplitude * 0.1, 0);
-            body.applyImpulse(impulse, body.position);
-          }
-      
-          // Atualiza a posição da malha
-          mesh.position.copy(body.position);
-          mesh.quaternion.copy(body.quaternion);
-      
-          // Atualiza a cor da bola com base na velocidade
-          const speed = body.velocity.length();
-          const newColor = getSpeedColor(speed);
-          mesh.material.color.set(newColor);
-      
-          // Atualiza o rastro
-          let positions = trail.geometry.attributes.position.array;
-          if (positions.length < 3 * 50) {
-            positions = new Float32Array(3 * 50);
-          }
-          positions = [...positions.slice(3), body.position.x, body.position.y, body.position.z];
-          trail.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-          trail.geometry.attributes.position.needsUpdate = true;
-      
-          // Atualiza a informação de texto
-          infoText.text = `Vel: ${speed.toFixed(2)}`;
-          infoText.position.set(body.position.x, body.position.y + ballSize, body.position.z);
-          infoText.sync();
+    const createWalls = useCallback(() => {
+        const wallMaterial = new CANNON.Material();
+        const wallThickness = 0.5;
+        const wallHeight = boxSize;
+        const wallGeometry = new THREE.BoxGeometry(boxSize, wallHeight, wallThickness);
+    
+        // Material transparente para o teto
+        const threeWallMaterial = new THREE.MeshPhongMaterial({
+          color: 0x666666,
+          side: THREE.DoubleSide,
         });
-      
-        controls.update();
-        renderer.current.render(scene, camera);
-      };
+        const threeCeilingMaterial = new THREE.MeshPhongMaterial({
+          color: 0x666666,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.2, // Ajuste a opacidade conforme desejado
+        });
+    
+        const createWall = (position, quaternion, material) => {
+          const wallShape = new CANNON.Box(new CANNON.Vec3(boxSize / 2, wallHeight / 2, wallThickness / 2));
+          const wallBody = new CANNON.Body({
+            mass: 0,
+            shape: wallShape,
+            material: wallMaterial,
+          });
+          wallBody.position.copy(position);
+          wallBody.quaternion.copy(quaternion);
+          world.addBody(wallBody);
+    
+          const wallMesh = new THREE.Mesh(wallGeometry, material);
+          wallMesh.position.copy(position);
+          wallMesh.quaternion.copy(quaternion);
+          scene.add(wallMesh);
+        };
+    
+        // Chão
+        createWall(
+          new CANNON.Vec3(0, -wallHeight / 2, 0),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2),
+          threeWallMaterial
+        );
+        // Teto (transparente)
+        createWall(
+          new CANNON.Vec3(0, wallHeight / 2, 0),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI / 2),
+          threeCeilingMaterial
+        );
+        // Parede Traseira
+        createWall(
+          new CANNON.Vec3(0, 0, -boxSize / 2),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 0, 0), 0),
+          threeWallMaterial
+        );
+        // Parede Frontal
+        createWall(
+          new CANNON.Vec3(0, 0, boxSize / 2),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI),
+          threeWallMaterial
+        );
+        // Parede Esquerda
+        createWall(
+          new CANNON.Vec3(-boxSize / 2, 0, 0),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), Math.PI / 2),
+          threeWallMaterial
+        );
+        // Parede Direita
+        createWall(
+          new CANNON.Vec3(boxSize / 2, 0, 0),
+          new CANNON.Quaternion().setFromAxisAngle(new CANNON.Vec3(0, 1, 0), -Math.PI / 2),
+          threeWallMaterial
+        );
+      }, [boxSize, scene, world]);
 
-    // Iniciar a animação
-    animateRef.current();
-
-    // Redimensionamento
-    const handleResize = () => {
-      renderer.current.setSize(window.innerWidth, window.innerHeight);
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-    };
-    window.addEventListener('resize', handleResize);
-
-    // Limpeza
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      controls.dispose();
-      renderer.current.dispose();
-      renderer.current = null;
-    };
-}, [gravity, scene, camera, world, ballColors, boxSize, getAudioAmplitude, createWalls, ballSize, getSpeedColor, isPaused]);
+      useEffect(() => {
+        renderer.current = new THREE.WebGLRenderer({ canvas: canvasRef.current, antialias: true });
+        renderer.current.setSize(window.innerWidth, window.innerHeight);
+        renderer.current.setClearColor(0x000000);
+        renderer.current.shadowMap.enabled = true;
+    
+        world.gravity.set(0, gravity, 0);
+        world.broadphase = new CANNON.NaiveBroadphase();
+        world.solver.iterations = 10;
+    
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+    
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+        directionalLight.position.set(5, 5, 5);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 1024;
+        directionalLight.shadow.mapSize.height = 1024;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 500;
+        scene.add(directionalLight);
+    
+        // Plano (Chão)
+        const planeGeometry = new THREE.PlaneGeometry(boxSize, boxSize);
+        const planeMaterial = new THREE.MeshPhongMaterial({ color: 0x999999, side: THREE.DoubleSide });
+        const planeMesh = new THREE.Mesh(planeGeometry, planeMaterial);
+        planeMesh.rotation.x = -Math.PI / 2;
+        planeMesh.receiveShadow = true;
+        scene.add(planeMesh);
+    
+        const planeShape = new CANNON.Plane();
+        const planeBody = new CANNON.Body({ mass: 0, shape: planeShape });
+        planeBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+        world.addBody(planeBody);
+    
+        // Paredes e Teto
+        createWalls();
+    
+        // Contato entre Bola e Parede
+        const ballMaterial = new CANNON.Material();
+        const wallMaterial = new CANNON.Material();
+        world.addContactMaterial(new CANNON.ContactMaterial(ballMaterial, wallMaterial, {
+          friction: 0.1,
+          restitution: 0.7
+        }));
+    
+        balls.current.forEach(({ body }) => {
+          body.material = ballMaterial;
+        });
+    
+        // Câmera e Controles
+        camera.position.set(0, 8, 25);
+        camera.lookAt(0, 0, 0);
+    
+        const controls = new OrbitControls(camera, renderer.current.domElement);
+        controls.target.set(0, 0, 0);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+    
+        // Animação
+        animateRef.current = () => {
+            if (isPaused) return;
+            requestAnimationFrame(animateRef.current);
+            world.gravity.set(0, gravity, 0);
+            world.step(1 / 60);
+          
+            // Usa a amplitude do áudio para o efeito de pulo
+            const amplitude = getAudioAmplitude();
+          
+            balls.current.forEach(({ mesh, body, trail, infoText }) => {
+              // Reatividade ao som (PULO)
+              if (amplitude > 30) {
+                let impulse = new CANNON.Vec3(0, amplitude * 0.1, 0);
+                body.applyImpulse(impulse, body.position);
+              }
+          
+              // Atualiza a posição da malha
+              mesh.position.copy(body.position);
+              mesh.quaternion.copy(body.quaternion);
+          
+              // Atualiza a cor da bola com base na velocidade
+              const speed = body.velocity.length();
+              const newColor = getSpeedColor(speed);
+              mesh.material.color.set(newColor);
+          
+              // Atualiza o rastro
+              let positions = trail.geometry.attributes.position.array;
+              if (positions.length < 3 * 50) {
+                positions = new Float32Array(3 * 50);
+              }
+              positions = [...positions.slice(3), body.position.x, body.position.y, body.position.z];
+              trail.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+              trail.geometry.attributes.position.needsUpdate = true;
+          
+              // Atualiza a informação de texto
+              infoText.text = `Vel: ${speed.toFixed(2)}`;
+              infoText.position.set(body.position.x, body.position.y + ballSize, body.position.z);
+              infoText.sync();
+            });
+          
+            controls.update();
+            renderer.current.render(scene, camera);
+          };
+    
+        // Iniciar a animação
+        animateRef.current();
+    
+        // Redimensionamento
+        const handleResize = () => {
+          renderer.current.setSize(window.innerWidth, window.innerHeight);
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+        };
+        window.addEventListener('resize', handleResize);
+    
+        // Limpeza
+        return () => {
+          window.removeEventListener('resize', handleResize);
+          controls.dispose();
+          renderer.current.dispose();
+          renderer.current = null;
+        };
+    }, [gravity, scene, camera, world, ballColors, boxSize, getAudioAmplitude, createWalls, ballSize, getSpeedColor, isPaused]);
 
   useEffect(() => {
     resetBalls();
@@ -305,13 +335,12 @@ const BallAnimation = () => {
     }
   };
 
-  const handleTogglePause = () => {
-    setIsPaused(!isPaused);
-    if (!isPaused) {
-        // Chamar a função de animação através da referência
-        animateRef.current();
-      }
-  };
+    const handleTogglePause = () => {
+        setIsPaused(!isPaused);
+        if (!isPaused && animateRef.current) {
+            animateRef.current();
+        }
+    };
 
   const handleReset = () => {
     resetBalls();
@@ -356,7 +385,16 @@ const BallAnimation = () => {
 
     const reader = new FileReader();
     reader.onload = (e) => {
-      audioContext.current = new AudioContext();
+      if (audioContext.current) {
+        // Se já existir um contexto, pare e desconecte a fonte atual
+        if (source.current) {
+          source.current.disconnect();
+        }
+    } else {
+        // Se não houver um contexto, crie um novo
+        audioContext.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
       audioContext.current.decodeAudioData(e.target.result, (buffer) => {
         if (source.current) {
           source.current.disconnect();
@@ -367,89 +405,134 @@ const BallAnimation = () => {
         analyser.current = audioContext.current.createAnalyser();
         source.current.connect(analyser.current);
         analyser.current.connect(audioContext.current.destination);
-        source.current.start(0);
+        
         analyser.current.fftSize = 256;
         dataArray.current = new Uint8Array(analyser.current.frequencyBinCount);
+
+        setAudioLoaded(true);
+        setIsPlaying(false);
+      }, (error) => {
+        console.error('Erro ao decodificar o áudio:', error);
       });
     };
     reader.readAsArrayBuffer(file);
   };
 
-  // --- JSX para os Controles e Renderização ---
-  return (
-    <div className="animation-container">
-      <div className="controls-panel">
-        <div className="control-group">
-          <button onClick={handleAddBall}>Gerar Bola</button>
-          <button onClick={handleTogglePause}>{isPaused ? "Retomar" : "Pausar"}</button>
-          <button onClick={handleReset}>Reiniciar</button>
-        </div>
-        <div className="control-group">
-          <label htmlFor="numBalls">Número de Bolas: {numBalls}</label>
-          <input
-            type="range"
-            id="numBalls"
-            min="1"
-            max="50"
-            value={numBalls}
-            onChange={(e) => setNumBalls(parseInt(e.target.value))}
-            disabled={true}
-          />
-        </div>
-        <div className="control-group">
-          <label htmlFor="gravity">Gravidade: {gravity}</label>
-          <input
-            type="range"
-            id="gravity"
-            min="-20"
-            max="0"
-            step="0.1"
-            value={gravity}
-            onChange={(e) => setGravity(parseFloat(e.target.value))}
-          />
-        </div>
-        <div className="control-group">
-          <label htmlFor="ballSize">Tamanho das Bolas: {ballSize}</label>
-          <input
-            type="range"
-            id="ballSize"
-            min="0.1"
-            max="2"
-            step="0.1"
-            value={ballSize}
-            onChange={(e) => handleSizeChange(parseFloat(e.target.value))}
-          />
-        </div>
-        <div className="control-group">
-          <label htmlFor="boxSize">Tamanho da Caixa: {boxSize}</label>
-          <input
-            type="range"
-            id="boxSize"
-            min="5"
-            max="50"
-            step="1"
-            value={boxSize}
-            onChange={(e) => handleBoxSizeChange(parseFloat(e.target.value))}
-          />
-        </div>
-        <div className="control-group colors-control">
-          <button className="color-button" onClick={() => handleColorChange(['#ff0000', '#00ff00', '#0000ff'])}>
-            Cores 1
-          </button>
-          <button className="color-button" onClick={() => handleColorChange(['#ffff00', '#ff00ff', '#00ffff'])}>
-            Cores 2
-          </button>
-          <button className="color-button" onClick={() => handleColorChange(['#FFA500', '#800080', '#008080', '#000080'])}>
-            Cores 3
-          </button>
-        </div>
-        <div className="control-group">
-          <input type="file" accept="audio/*" onChange={handleAudioUpload} />
-        </div>
+  const handlePlayAudio = () => {
+    if (!audioContext.current) return;
+
+    if (audioContext.current.state === 'suspended') {
+      audioContext.current.resume();
+    }
+    
+    if (source.current && !isPlaying) {
+      source.current.start(0);
+      setIsPlaying(true);
+    }
+  };
+
+  const handlePauseAudio = () => {
+    if (!audioContext.current) return;
+
+    audioContext.current.suspend();
+    setIsPlaying(false);
+  };
+
+  const handleStopAudio = () => {
+      if (!source.current) return;
+  
+      source.current.stop();
+      source.current.disconnect(); // Desconecta a fonte atual
+      source.current = null; // Reseta a fonte
+      setIsPlaying(false);
+    };
+
+// --- JSX para os Controles e Renderização ---
+return (
+  <div className="animation-container">
+    <div className="controls-panel">
+      <div className="control-group">
+        <button onClick={handleAddBall}>Gerar Bola</button>
+        <button onClick={handleTogglePause}>{isPaused ? "Retomar" : "Pausar"}</button>
+        <button onClick={handleReset}>Reiniciar</button>
       </div>
-      <canvas ref={canvasRef} />
+      <div className="control-group">
+        <label htmlFor="numBalls">Número de Bolas: {numBalls}</label>
+        <input
+          type="range"
+          id="numBalls"
+          min="1"
+          max="50"
+          value={numBalls}
+          onChange={(e) => setNumBalls(parseInt(e.target.value))}
+          disabled={true}
+        />
+      </div>
+      <div className="control-group">
+        <label htmlFor="gravity">Gravidade: {gravity}</label>
+        <input
+          type="range"
+          id="gravity"
+          min="-20"
+          max="0"
+          step="0.1"
+          value={gravity}
+          onChange={(e) => setGravity(parseFloat(e.target.value))}
+        />
+      </div>
+      <div className="control-group">
+        <label htmlFor="ballSize">Tamanho das Bolas: {ballSize}</label>
+        <input
+          type="range"
+          id="ballSize"
+          min="0.1"
+          max="2"
+          step="0.1"
+          value={ballSize}
+          onChange={(e) => handleSizeChange(parseFloat(e.target.value))}
+        />
+      </div>
+      <div className="control-group">
+        <label htmlFor="boxSize">Tamanho da Caixa: {boxSize}</label>
+        <input
+          type="range"
+          id="boxSize"
+          min="5"
+          max="50"
+          step="1"
+          value={boxSize}
+          onChange={(e) => handleBoxSizeChange(parseFloat(e.target.value))}
+        />
+      </div>
+      <div className="control-group colors-control">
+        <button className="color-button" onClick={() => handleColorChange(['#ff0000', '#00ff00', '#0000ff'])}>
+          Cores 1
+        </button>
+        <button className="color-button" onClick={() => handleColorChange(['#ffff00', '#ff00ff', '#00ffff'])}>
+          Cores 2
+        </button>
+        <button className="color-button" onClick={() => handleColorChange(['#FFA500', '#800080', '#008080', '#000080'])}>
+          Cores 3
+        </button>
+      </div>
+      <div className="control-group">
+        <input type="file" accept="audio/*" onChange={handleAudioUpload} />
+      </div>
+      <div className="control-group audio-controls">
+        <button onClick={handlePlayAudio} disabled={!audioLoaded}>
+          <i className="fas fa-play"></i> Play
+        </button>
+        <button onClick={handlePauseAudio} disabled={!audioLoaded}>
+          <i className="fas fa-pause"></i> Pause
+        </button>
+        <button onClick={handleStopAudio} disabled={!audioLoaded}>
+          <i className="fas fa-stop"></i> Stop
+        </button>
+      </div>
     </div>
-  );
+    <canvas ref={canvasRef} />
+  </div>
+);
 };
 
 export default BallAnimation;
